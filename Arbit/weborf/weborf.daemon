@@ -1,0 +1,180 @@
+#!/bin/bash
+# Copyright (C) 2008  Salvo "LtWorf" Tomaselli
+#
+# Relation is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# author Salvo "LtWorf" Tomaselli <tiposchi@tiscali.it>
+
+
+### BEGIN INIT INFO
+# Provides:          weborf
+# Required-Start:    $network $local_fs $syslog $remote_fs
+# Required-Stop:     $remote_fs
+# Should-Start:      $named
+# Should-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Fast and small webserver
+# Description:       Weborf is a configurationless webserver mainly meant to allow users
+#                    to easily share their directories over the web.
+#                    It also supports php5-cgi.
+### END INIT INFO
+
+function status {
+    if ! test -e $PIDFILE
+        then
+            echo "Weborf doesn't appear to be running"
+        else
+            echo "Weborf appears to be running"
+    fi
+}
+
+function stopWeborf {
+    #Stops all the running weborf servers (the ones started with init)
+
+    if ! test -e $PIDFILE
+    then
+        echo "Weborf is not running or it was not started by init"
+        exit 0
+    fi
+
+    echo -n "Stopping weborf "    
+    for i in `cat $PIDFILE`
+    do
+        echo -n ..
+        kill $i
+    done
+    echo " done"
+    rm -f $PIDFILE
+}
+
+function startWeborf {
+    #This function will start all the needed processes for weborf
+    if test -e $PIDFILE
+    then
+        echo "Weborf already running, if you're sure it is not running, delete $PIDFILE"
+        exit 2
+    fi
+    
+    if test -n "$AUTH_BIN"
+    then
+        echo "Starting authentication server for weborf"
+        nohup $AUTH_BIN > /dev/null 2> /dev/null &
+        echo ${!} >> $PIDFILE # Writes PID so it will be terminated
+    fi
+
+    virtuals=`cat /etc/weborf.conf | egrep ^virtual`
+    if test -z "$virtuals"
+    then
+        echo "Starting weborf"
+        nohup $DAEMON $DAEMON_OPTS $AUTH_SOCKET $CGI $CGI_BIN -p80 -u $USERID -b $BASEDIR -I $INDEXES >/dev/null 2> /dev/null &
+        echo ${!} >> $PIDFILE # Writes PID so weborf can be terminated
+    else #Virtual hosts
+    
+        for i in $virtuals
+            do
+                PORT=`echo $i | cut -d# -f2`
+                CMDLINE=`echo $i | cut -d# -f3`
+                echo "Starting weborf on port $PORT"
+                nohup $DAEMON $DAEMON_OPTS $AUTH_SOCKET $CGI $CGI_BIN -p $PORT -u $USERID -b $BASEDIR -I $INDEXES -V "$CMDLINE" > /dev/null 2> /dev/null &
+                echo $! >> $PIDFILE # Writes PID so weborf can be terminated
+            done
+    fi
+}
+
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+DAEMON=/usr/bin/weborf                    # Introduce the server's location here
+NAME=weborf                               # Introduce the short server's name here
+PIDFILE=/var/run/$NAME.pid
+
+test -x $DAEMON || exit 0
+
+. /lib/lsb/init-functions
+
+# Default options, these can be overriden by the information
+# at /etc/default/$NAME
+DAEMON_OPTS=""          # Additional options given to the server
+
+DIETIME=3               # Time to wait for the server to die, in seconds
+                        # If this value is set too low you might not
+                        # let some servers to die gracefully and
+                        # 'restart' will not work
+
+#STARTTIME=2             # Time to wait for the server to start, in seconds
+                        # If this value is set each time the server is
+                        # started (on start or restart) the script will
+                        # stall to try to determine if it is running
+                        # If it is not set and the server takes time
+                        # to setup a pid file the log message might
+                        # be a false positive (says it did not start
+                        # when it actually did)
+
+LOGFILE=$LOGDIR/$NAME.log  # Server logfile
+
+# Include defaults if available
+if [ -f /etc/default/$NAME ] ; then
+    . /etc/default/$NAME
+fi
+
+USERNAME=`cat /etc/weborf.conf | fgrep "user=" | cut -d= -f2`
+BASEDIR=`cat /etc/weborf.conf | fgrep "basedir=" | cut -d= -f2`
+USERID=`cat /etc/passwd | fgrep $USERNAME | cut -d: -f3` #Gets the userid
+INDEXES=`cat /etc/weborf.conf | fgrep "indexes=" | cut -d= -f2`
+USE_CGI=`cat /etc/weborf.conf | fgrep "use-cgi=" | cut -d= -f2`
+CGI_BIN=`cat /etc/weborf.conf | fgrep "cgi=" | cut -d= -f2`
+
+# Authentication
+AUTH_BIN=`cat /etc/weborf.conf | grep "^auth-bin=" | cut -d= -f2`
+AUTH_SOCKET=`cat /etc/weborf.conf | grep "^auth-socket=" | cut -d= -f2`
+
+if test -n "$AUTH_SOCKET"
+then
+        AUTH_SOCKET="-a $AUTH_SOCKET"
+fi
+
+if test -n "$CGI_BIN"
+then
+    CGI_BIN=-c $CGI_BIN
+fi
+
+if test $USE_CGI = "false"
+then
+    CGI="-x"
+fi
+
+
+if test -z $USERID
+then
+    echo "Unable to find user $USERNAME"
+    echo "Check your configuration"
+    exit 1
+fi
+case $1 in
+    start)
+        startWeborf;;
+    stop)	
+        stopWeborf;;
+    restart)
+        stopWeborf
+        startWeborf;;
+    force-reload)
+        stopWeborf
+        startWeborf;;
+    status)
+        status;;
+    * )
+        echo "Usage: $0 {start|stop|restart|force-reload|status}";;
+esac
+

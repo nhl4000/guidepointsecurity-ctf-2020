@@ -1,0 +1,23 @@
+Notice that header of site had:
+
+X-Powered-By: Express
+
+So I thought, NodeJS + Express...
+
+Submittin the login request its parameters are the following:
+
+user=test&pass=test
+
+After reearching it was most likely using MongoDB (instead of MySQL - why? it was given in the problem statement).
+
+
+Changing the parameters to
+
+user[$ne]=test&pass[$ne]=test
+
+
+This changes the MongoDB query to get select results where user is "not equal" to test and pass is "not equal" to test. We know we can use this user and pass of test/test because it failed to login.
+
+BTW: Make sure to remove/change the request header "Content-Length".
+
+
